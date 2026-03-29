@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kruskal's MST Ultimate Visualizer</title>
+    <style>
+        :root {
+            --bg-color: #0f172a; --panel-bg: #1e293b; --accent-color: #38bdf8;
+            --text-main: #f8fafc; --text-dim: #94a3b8; --border-color: #334155;
+            --success: #22c55e; --danger: #ef4444; --warning: #eab308;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Inter', sans-serif; background: var(--bg-color); color: var(--text-main); display: flex; height: 100vh; overflow: hidden; }
+
+        #container { display: flex; width: 100%; height: 100%; }
+        #controls { width: 420px; background: var(--panel-bg); border-right: 1px solid var(--border-color); padding: 1.2rem; display: flex; flex-direction: column; gap: 1rem; overflow-y: auto; }
+        #visualization { flex-grow: 1; display: flex; flex-direction: column; padding: 1rem; position: relative; gap: 1rem; overflow-y: auto; }
+
+        @media (max-width: 980px) { body { overflow-y: auto; height: auto; } #container { flex-direction: column; } #controls { width: 100%; } }
+
+        .card { background: #020617; padding: 1rem; border-radius: 8px; border: 1px solid var(--border-color); }
+        .section-title { font-size: 0.75rem; text-transform: uppercase; color: var(--text-dim); margin-bottom: 0.5rem; display: block; }
+        button { background: var(--border-color); color: white; border: none; padding: 0.5rem; border-radius: 4px; cursor: pointer; font-size: 0.85rem; transition: 0.2s; }
+        button:hover { background: #475569; }
+        button.primary { background: var(--accent-color); color: #0f172a; font-weight: bold; }
+        
+        /* Legend */
+        .legend { display: flex; gap: 10px; font-size: 0.75rem; margin-top: 5px; }
+        .legend-item { display: flex; align-items: center; gap: 4px; }
+        .dot { width: 10px; height: 10px; border-radius: 50%; }
+
+        /* Pseudocode */
+        #pseudo-panel { font-family: 'Fira Code', monospace; font-size: 0.85rem; line-height: 1.4; }
+        .code-line { padding: 2px 8px; border-radius: 4px; transition: 0.2s; position: relative; cursor: help; }
+        .code-line.active { background: var(--warning); color: #000; font-weight: bold; }
+        .tooltip { visibility: hidden; position: absolute; left: 100%; top: 0; background: #334155; color: white; padding: 8px; border-radius: 4px; width: 220px; z-index: 100; font-size: 0.75rem; border: 1px solid var(--accent-color); }
+        .code-line:hover .tooltip { visibility: visible; }
+
+        /* History Table */
+        #history-box { max-height: 150px; overflow-y: auto; font-size: 0.75rem; width: 100%; }
+        table { width: 100%; border-collapse: collapse; }
+        td { padding: 6px; border-bottom: 1px solid #1e293b; }
+        .hist-accepted { color: var(--success); font-weight: bold; }
+        .hist-rejected { color: var(--danger); font-weight: bold; }
+
+        #svg-canvas { width: 100%; height: 450px; background: #020617; border-radius: 8px; border: 1px solid var(--border-color); }
+    </style>
+</head>
+<body>
+
+<div id="container">
+    <aside id="controls">
+        <h2>Kruskal's Visualizer</h2>
+        
+        <div class="card">
+            <span class="section-title">Graph Input</span>
+            <textarea id="graph-input" style="width: 100%; height: 60px; background: #0f172a; color: white; border: 1px solid var(--border-color); padding: 5px; font-family: monospace;">A-B:4, B-C:2, A-C:5</textarea>
+            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 5px; margin-top: 5px;">
+                <button onclick="loadPreset(1)">Preset 1</button>
+                <button onclick="loadPreset(2)">Preset 2</button>
+                <button onclick="loadPreset(3)">Preset 3</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <span class="section-title">Playback Controls</span>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 5px;">
+                <button class="primary" style="grid-column: span 2" id="btn-build" onclick="parseInput()">Build Steps</button>
+                <button onclick="nextStep()">Step</button>
+                <button onclick="playAnimation()">Play</button>
+                <button onclick="pauseAnimation()">Pause</button>
+                <button onclick="resetUI()">Reset</button>
+            </div>
+            <div style="margin-top: 10px;">
+                <span class="section-title">Speed: <b id="speed-val">1x</b></span>
+                <input type="range" id="speed-slider" min="0.25" max="4" step="0.25" value="1" style="width: 100%;">
+            </div>
+            <div class="legend">
+                <div class="legend-item"><div class="dot" style="background:var(--success)"></div>MST</div>
+                <div class="legend-item"><div class="dot" style="background:var(--danger)"></div>Cycle</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <span class="section-title">Statistics</span>
+            <div style="display:flex; justify-content: space-around; text-align: center;">
+                <div><small>Edges</small><br><b id="stat-edges">0</b></div>
+                <div><small>Progress</small><br><b id="step-counter">0/0</b></div>
+                <div><small>Total Cost</small><br><b id="total-weight" style="color:var(--success)">0</b></div>
+            </div>
+        </div>
+
+        <div class="card" id="pseudo-panel">
+            <span class="section-title">Pseudocode</span>
+            <div class="code-line" id="line-1">1. Sort edges by weight<span class="tooltip">Sorts the edge list small to large.</span></div>
+            <div class="code-line" id="line-2">2. For each edge (u, v):<span class="tooltip">Iterate through sorted edges.</span></div>
+            <div class="code-line" id="line-3">&nbsp;&nbsp;3. If Find(u) != Find(v):<span class="tooltip">Union-Find: Check if they are in different sets.</span></div>
+            <div class="code-line" id="line-4">&nbsp;&nbsp;&nbsp;&nbsp;4. Add edge to MST<span class="tooltip">Accept: No cycle formed.</span></div>
+            <div class="code-line" id="line-5">&nbsp;&nbsp;&nbsp;&nbsp;5. Union(u, v)<span class="tooltip">Connect: Merge the two components.</span></div>
+        </div>
+    </aside>
+
+    <main id="visualization">
+        <div class="card" style="border-left: 4px solid var(--accent-color);">
+            <span class="section-title">Step Explanation</span>
+            <p id="explanation-text">Enter graph and click 'Build Steps'.</p>
+        </div>
+        <svg id="svg-canvas"></svg>
+        <div class="card">
+            <span class="section-title">Step History</span>
+            <div id="history-box"><table id="history-table"><tbody></tbody></table></div>
+        </div>
+    </main>
+</div>
+
+<script>
+    class DisjointSet {
+        constructor(ids) { this.parent = {}; ids.forEach(id => this.parent[id] = id); }
+        find(i) { if (this.parent[i] === i) return i; return this.find(this.parent[i]); }
+        union(i, j) { 
+            let rootI = this.find(i), rootJ = this.find(j); 
+            if (rootI !== rootJ) { this.parent[rootI] = rootJ; return true; } 
+            return false; 
+        }
+    }
+
+    let nodes = [], edges = [], steps = [], currentStepIndex = 0, mstWeight = 0;
+    let isPlaying = false, animationInterval = null, animationSpeed = 1000;
+
+    document.getElementById('speed-slider').oninput = function() {
+        animationSpeed = 1000 / this.value;
+        document.getElementById('speed-val').innerText = this.value + 'x';
+        if(isPlaying) { pauseAnimation(); playAnimation(); }
+    };
+
+    function loadPreset(n) {
+        let inp = document.getElementById('graph-input');
+        if(n==1) inp.value = "A-B:4, A-H:8, B-C:8, B-H:11, C-D:7, C-I:2, C-F:4, D-E:9, D-F:14, E-F:10, F-G:2, G-H:1, G-I:6, H-I:7";
+        if(n==2) inp.value = "A-B:1, B-C:2, C-A:3";
+        if(n==3) inp.value = "A-B:5, B-C:5, C-D:5, D-A:5, A-C:2";
+    }
+
+    function resetUI() {
+        pauseAnimation();
+        nodes = []; edges = []; steps = []; currentStepIndex = 0; mstWeight = 0;
+        document.querySelector('#history-table tbody').innerHTML = '';
+        document.getElementById('svg-canvas').innerHTML = '';
+        document.querySelectorAll('.code-line').forEach(l => l.classList.remove('active'));
+        document.getElementById('total-weight').innerText = '0';
+        document.getElementById('step-counter').innerText = '0/0';
+        document.getElementById('explanation-text').innerText = "System Reset.";
+    }
+
+    function parseInput() {
+        resetUI(); // Clear everything first
+        let str = document.getElementById('graph-input').value, nodeSet = new Set();
+        if(!str) return alert("Please enter graph data.");
+
+        str.split(',').forEach(p => {
+            let parts = p.trim().split(':');
+            if(parts.length < 2) return;
+            let [c, w] = parts, [u, v] = c.trim().split('-');
+            let uI = u.trim(), vI = v.trim();
+            edges.push({ from: uI, to: vI, weight: parseInt(w), id: `edge-${uI}-${vI}` });
+            nodeSet.add(uI); nodeSet.add(vI);
+        });
+
+        nodes = Array.from(nodeSet).map(id => ({ id }));
+        drawGraph();
+        initAlgorithm();
+        document.getElementById('explanation-text').innerText = "Steps Built. Use 'Step' or 'Play'.";
+    }
+
+    function drawGraph() {
+        let svg = document.getElementById('svg-canvas'), w = svg.clientWidth, h = svg.clientHeight;
+        svg.innerHTML = '';
+        let cx = w/2, cy = h/2, r = Math.min(w,h) * 0.35;
+
+        nodes.forEach((n, i) => { 
+            let a = (i/nodes.length)*2*Math.PI; 
+            n.x = cx+r*Math.cos(a); n.y = cy+r*Math.sin(a); 
+        });
+
+        edges.forEach(e => {
+            let u = nodes.find(n => n.id === e.from), v = nodes.find(n => n.id === e.to);
+            let l = document.createElementNS("http://www.w3.org/2000/svg", "line");
+            l.setAttribute("x1", u.x); l.setAttribute("y1", u.y);
+            l.setAttribute("x2", v.x); l.setAttribute("y2", v.y);
+            l.setAttribute("stroke", "#334155"); l.setAttribute("stroke-width", "2");
+            l.setAttribute("id", e.id);
+            svg.appendChild(l);
+
+            let t = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            t.setAttribute("x", (u.x + v.x)/2); t.setAttribute("y", (u.y + v.y)/2 - 10);
+            t.setAttribute("fill", "#94a3b8"); t.setAttribute("font-size", "14px");
+            t.setAttribute("text-anchor", "middle"); t.textContent = e.weight;
+            svg.appendChild(t);
+        });
+
+        nodes.forEach(n => {
+            let g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+            let c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+            c.setAttribute("cx", n.x); c.setAttribute("cy", n.y); c.setAttribute("r", "16");
+            c.setAttribute("fill", "#1e293b"); c.setAttribute("stroke", "#38bdf8");
+            let t = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            t.setAttribute("x", n.x); t.setAttribute("y", n.y+5); t.setAttribute("text-anchor", "middle");
+            t.setAttribute("fill", "white"); t.textContent = n.id;
+            g.appendChild(c); g.appendChild(t); svg.appendChild(g);
+        });
+        document.getElementById('stat-edges').innerText = edges.length;
+    }
+
+    function initAlgorithm() {
+        let sorted = [...edges].sort((a,b) => a.weight - b.weight);
+        let ds = new DisjointSet(nodes.map(n => n.id));
+        steps = [];
+        sorted.forEach(e => {
+            if (ds.union(e.from, e.to)) steps.push({ eId: e.id, w: e.weight, type: 'ACCEPTED', msg: `Added ${e.from}-${e.to} (Weight ${e.weight})`, line: 4 });
+            else steps.push({ eId: e.id, w: 0, type: 'REJECTED', msg: `Cycle detected at ${e.from}-${e.to}`, line: 3 });
+        });
+        document.getElementById('step-counter').innerText = `0/${steps.length}`;
+    }
+
+    function nextStep() {
+        if (currentStepIndex >= steps.length) { pauseAnimation(); return alert("Complete!"); }
+        let s = steps[currentStepIndex];
+        let el = document.getElementById(s.eId);
+        
+        document.querySelectorAll('.code-line').forEach(l => l.classList.remove('active'));
+        document.getElementById(`line-${s.line}`).classList.add('active');
+
+        if (el) {
+            if (s.type === 'ACCEPTED') { el.setAttribute("stroke", "#22c55e"); el.setAttribute("stroke-width", "6"); mstWeight += s.w; }
+            else { el.setAttribute("stroke", "#ef4444"); el.setAttribute("stroke-dasharray", "5,5"); }
+        }
+
+        let row = document.getElementById('history-table').querySelector('tbody').insertRow(0);
+        row.innerHTML = `<td>${currentStepIndex+1}</td><td>Checking</td><td class="${s.type=='ACCEPTED'?'hist-accepted':'hist-rejected'}">${s.type}</td>`;
+        
+        document.getElementById('explanation-text').innerText = s.msg;
+        currentStepIndex++;
+        document.getElementById('step-counter').innerText = `${currentStepIndex}/${steps.length}`;
+        document.getElementById('total-weight').innerText = mstWeight;
+    }
+
+    function playAnimation() { if(!isPlaying && steps.length > 0) { isPlaying = true; animationInterval = setInterval(nextStep, animationSpeed); } }
+    function pauseAnimation() { isPlaying = false; clearInterval(animationInterval); }
+</script>
+</body>
+</html>
